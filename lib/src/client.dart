@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'dart:math' show min;
@@ -27,6 +28,9 @@ class TusClient extends TusClientBase {
   http.Client getHttpClient() => http.Client();
 
   int _actualRetry = 0;
+  bool _cancelled = false;
+
+  void cancel() => _cancelled = true;
 
   /// Create a new [upload] throwing [ProtocolException] on server error
   Future<void> createUpload() async {
@@ -172,6 +176,10 @@ class TusClient extends TusClientBase {
     }
 
     while (!_pauseUpload && _offset < totalBytes) {
+      if(_cancelled) {
+        break;
+      }
+
       if (!File(file.path).existsSync()) {
         throw Exception("Cannot find file ${file.path.split('/').last}");
       }
@@ -208,9 +216,15 @@ class TusClient extends TusClientBase {
       _response = await client.send(request);
 
       if (_response != null) {
+        Uint8List responseBytes = Uint8List(0);
         _response?.stream.listen(
           (newBytes) {
-            if (_actualRetry != 0) _actualRetry = 0;
+            responseBytes.addAll(newBytes);
+
+            // only reset retry if response was successful
+            if(_response!.statusCode >= 200 && _response!.statusCode < 300) {
+              if (_actualRetry != 0) _actualRetry = 0;
+            }
           },
           onDone: () {
             if (onProgress != null && !_pauseUpload) {
@@ -245,7 +259,7 @@ class TusClient extends TusClientBase {
         // check if correctly uploaded
         if (!(_response!.statusCode >= 200 && _response!.statusCode < 300)) {
           throw ProtocolException(
-            "Error while uploading file",
+            "Error while uploading file: "+utf8.decode(responseBytes),
             _response!.statusCode,
           );
         }
@@ -253,11 +267,13 @@ class TusClient extends TusClientBase {
         int? serverOffset = _parseOffset(_response!.headers["upload-offset"]);
         if (serverOffset == null) {
           throw ProtocolException(
-              "Response to PATCH request contains no or invalid Upload-Offset header");
+            "Response to PATCH request contains no or invalid Upload-Offset header: "+utf8.decode(responseBytes)
+          );
         }
         if (_offset != serverOffset) {
           throw ProtocolException(
-              "Response contains different Upload-Offset value ($serverOffset) than expected ($_offset)");
+            "Response contains different Upload-Offset value ($serverOffset) than expected ($_offset): "+utf8.decode(responseBytes)
+          );
         }
 
         if (_offset == totalBytes && !_pauseUpload) {
@@ -270,6 +286,10 @@ class TusClient extends TusClientBase {
         throw ProtocolException("Error getting Response from server");
       }
     } catch (e) {
+      if(_cancelled) {
+        return;
+      }
+
       if (_actualRetry >= retries) rethrow;
       final waitInterval = retryScale.getInterval(
         _actualRetry,
