@@ -28,9 +28,6 @@ class TusClient extends TusClientBase {
   http.Client getHttpClient() => http.Client();
 
   int _actualRetry = 0;
-  bool _cancelled = false;
-
-  void cancel() => _cancelled = true;
 
   /// Create a new [upload] throwing [ProtocolException] on server error
   Future<void> createUpload() async {
@@ -176,10 +173,6 @@ class TusClient extends TusClientBase {
     }
 
     while (!_pauseUpload && _offset < totalBytes) {
-      if(_cancelled) {
-        break;
-      }
-
       if (!File(file.path).existsSync()) {
         throw Exception("Cannot find file ${file.path.split('/').last}");
       }
@@ -286,10 +279,6 @@ class TusClient extends TusClientBase {
         throw ProtocolException("Error getting Response from server");
       }
     } catch (e) {
-      if(_cancelled) {
-        return;
-      }
-
       if (_actualRetry >= retries) rethrow;
       final waitInterval = retryScale.getInterval(
         _actualRetry,
