@@ -209,7 +209,7 @@ class TusClient extends TusClientBase {
       _response = await client.send(request);
 
       if (_response != null) {
-        Uint8List responseBytes = Uint8List(0);
+        var responseBytes = new List<int>.empty(growable: true);
         _response?.stream.listen(
           (newBytes) {
             responseBytes.addAll(newBytes);
